@@ -1,0 +1,185 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>PortraitCraft Prototype v1.4.2</title>
+<style>
+*{box-sizing:border-box;-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
+html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#75b9e8;touch-action:none;font-family:-apple-system,BlinkMacSystemFont,sans-serif}
+#game{position:fixed;inset:0;width:100%;height:100%;display:block}
+#cross{position:fixed;left:50%;top:45%;width:22px;height:22px;transform:translate(-50%,-50%);pointer-events:none}
+#cross:before,#cross:after{content:"";position:absolute;background:#fff;box-shadow:0 1px 2px #000}
+#cross:before{left:1px;top:10px;width:20px;height:2px}#cross:after{left:10px;top:1px;width:2px;height:20px}
+#stick{position:fixed;left:22px;bottom:calc(30px + env(safe-area-inset-bottom));width:126px;height:126px;border:3px solid #fff7;border-radius:50%;background:#fff1}
+#knob{position:absolute;left:35px;top:35px;width:50px;height:50px;border-radius:50%;background:#fffa}
+.btn{position:fixed;border:2px solid #fff8;border-radius:18px;background:#294d68cc;color:#fff;font-weight:750;font-size:14px}
+#break{right:18px;bottom:calc(30px + env(safe-area-inset-bottom));width:68px;height:68px}
+#place{right:96px;bottom:calc(30px + env(safe-area-inset-bottom));width:68px;height:68px}
+#jump{right:18px;bottom:calc(108px + env(safe-area-inset-bottom));width:58px;height:58px}
+#crouch{right:86px;bottom:calc(108px + env(safe-area-inset-bottom));width:62px;height:58px;font-size:12px}
+#sprint{left:96px;bottom:calc(166px + env(safe-area-inset-bottom));width:66px;height:48px;font-size:12px}
+#cameraBtn{top:calc(48px + env(safe-area-inset-top));left:50%;transform:translateX(-50%);width:120px;height:42px;font-size:12px}
+.btn.active{background:#688c3dcc;border-color:#fff}
+#debug{position:fixed;left:8px;top:calc(8px + env(safe-area-inset-top));padding:5px 7px;border-radius:7px;background:#0008;color:#fff;font:10px ui-monospace,monospace;pointer-events:none}
+</style>
+</head>
+<body>
+<canvas id="game"></canvas><div id="cross"></div><button id="cameraBtn" class="btn">시점 · 1인칭</button><div id="debug">v1.4.2 starting…</div>
+<div id="stick"><div id="knob"></div></div>
+<button id="jump" class="btn">점프</button><button id="crouch" class="btn">웅크리기</button><button id="sprint" class="btn">스프린트</button><button id="place" class="btn">설치</button><button id="break" class="btn">파괴</button>
+<script>
+(()=>{'use strict';
+const dbg=document.getElementById('debug'),canvas=document.getElementById('game');
+const gl=canvas.getContext('webgl',{alpha:false,antialias:false,depth:true,preserveDrawingBuffer:false});
+if(!gl){dbg.textContent='ERROR: WebGL unavailable';return}
+
+function compile(type,src){const s=gl.createShader(type);gl.shaderSource(s,src);gl.compileShader(s);if(!gl.getShaderParameter(s,gl.COMPILE_STATUS))throw Error(gl.getShaderInfoLog(s));return s}
+const VS=`attribute vec3 aPos;attribute vec3 aNormal;uniform mat4 uVP;uniform vec3 uOffset;uniform vec3 uScale;varying float vLight;varying vec3 vLocal;
+void main(){vec3 p=aPos*uScale+uOffset;vLocal=aPos;vLight=.55+.45*max(dot(aNormal,normalize(vec3(.4,1.,.25))),0.);gl_Position=uVP*vec4(p,1.);}`;
+const FS=`precision mediump float;varying float vLight;varying vec3 vLocal;uniform vec3 uTint;
+float h(vec2 p){return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453);}
+void main(){
+ vec2 uv=(abs(vLocal.y)<.001||abs(vLocal.y-1.)<.001)?vLocal.xz:((abs(vLocal.x)<.001||abs(vLocal.x-1.)<.001)?vLocal.zy:vLocal.xy);
+ float e=min(min(uv.x,1.-uv.x),min(uv.y,1.-uv.y));
+ float border=smoothstep(.035,.075,e);
+ vec2 c=floor(uv*5.0);
+ float n=(h(c)-.5)*.13;
+ vec3 stone=(vec3(.54,.55,.56)+n)*uTint;
+ vec3 col=mix(vec3(.24)*uTint,stone,border);
+ gl_FragColor=vec4(col*vLight,1.);
+}`;
+const program=gl.createProgram();gl.attachShader(program,compile(gl.VERTEX_SHADER,VS));gl.attachShader(program,compile(gl.FRAGMENT_SHADER,FS));gl.linkProgram(program);
+if(!gl.getProgramParameter(program,gl.LINK_STATUS)){dbg.textContent='ERROR: shader link';return}
+gl.useProgram(program);
+
+const cube=[
+ // top
+0,1,0,0,1,0, 1,1,0,0,1,0, 1,1,1,0,1,0, 0,1,0,0,1,0, 1,1,1,0,1,0, 0,1,1,0,1,0,
+ // bottom
+0,0,0,0,-1,0, 1,0,1,0,-1,0, 1,0,0,0,-1,0, 0,0,0,0,-1,0, 0,0,1,0,-1,0, 1,0,1,0,-1,0,
+ // front +z
+0,0,1,0,0,1, 0,1,1,0,0,1, 1,1,1,0,0,1, 0,0,1,0,0,1, 1,1,1,0,0,1, 1,0,1,0,0,1,
+ // back -z
+1,0,0,0,0,-1, 1,1,0,0,0,-1, 0,1,0,0,0,-1, 1,0,0,0,0,-1, 0,1,0,0,0,-1, 0,0,0,0,0,-1,
+ // left
+0,0,0,-1,0,0, 0,1,0,-1,0,0, 0,1,1,-1,0,0, 0,0,0,-1,0,0, 0,1,1,-1,0,0, 0,0,1,-1,0,0,
+ // right
+1,0,1,1,0,0, 1,1,1,1,0,0, 1,1,0,1,0,0, 1,0,1,1,0,0, 1,1,0,1,0,0, 1,0,0,1,0,0
+];
+const buffer=gl.createBuffer();gl.bindBuffer(gl.ARRAY_BUFFER,buffer);gl.bufferData(gl.ARRAY_BUFFER,new Float32Array(cube),gl.STATIC_DRAW);
+const aPos=gl.getAttribLocation(program,'aPos'),aNormal=gl.getAttribLocation(program,'aNormal');
+gl.enableVertexAttribArray(aPos);gl.vertexAttribPointer(aPos,3,gl.FLOAT,false,24,0);
+gl.enableVertexAttribArray(aNormal);gl.vertexAttribPointer(aNormal,3,gl.FLOAT,false,24,12);
+const uVP=gl.getUniformLocation(program,'uVP'),uOffset=gl.getUniformLocation(program,'uOffset'),uScale=gl.getUniformLocation(program,'uScale'),uTint=gl.getUniformLocation(program,'uTint');
+
+const blocks=new Set(),K=(x,y,z)=>x+','+y+','+z;
+for(let x=-4;x<=4;x++)for(let z=-4;z<=4;z++)blocks.add(K(x,0,z));
+let P={x:.5,y:1.7,z:3.3,yaw:Math.PI,pitch:-.36,vy:0,ground:true},move={x:0,y:0};
+let crouching=false,sprinting=false,sprintBoost=0;
+let fov=Math.PI/2.25,cameraMode=0,thirdDist=3.2;
+const cameraBtn=document.getElementById('cameraBtn');
+function setCameraMode(m){
+ cameraMode=m;
+ cameraBtn.textContent='시점 · '+(m===0?'1인칭':'3인칭');
+}
+
+function perspective(fovy,aspect,near,far){const f=1/Math.tan(fovy/2),nf=1/(near-far);return new Float32Array([f/aspect,0,0,0,0,f,0,0,0,0,(far+near)*nf,-1,0,0,2*far*near*nf,0])}
+function lookAt(e,c,u){let zx=e[0]-c[0],zy=e[1]-c[1],zz=e[2]-c[2],l=Math.hypot(zx,zy,zz);zx/=l;zy/=l;zz/=l;
+ let xx=u[1]*zz-u[2]*zy,xy=u[2]*zx-u[0]*zz,xz=u[0]*zy-u[1]*zx;l=Math.hypot(xx,xy,xz);xx/=l;xy/=l;xz/=l;
+ let yx=zy*xz-zz*xy,yy=zz*xx-zx*xz,yz=zx*xy-zy*xx;
+ return new Float32Array([xx,yx,zx,0,xy,yy,zy,0,xz,yz,zz,0,-(xx*e[0]+xy*e[1]+xz*e[2]),-(yx*e[0]+yy*e[1]+yz*e[2]),-(zx*e[0]+zy*e[1]+zz*e[2]),1])}
+function mul(a,b){let o=new Float32Array(16);for(let c=0;c<4;c++)for(let r=0;r<4;r++)o[c*4+r]=a[r]*b[c*4]+a[4+r]*b[c*4+1]+a[8+r]*b[c*4+2]+a[12+r]*b[c*4+3];return o}
+
+function resize(){const d=Math.min(devicePixelRatio||1,2),w=Math.max(1,innerWidth),h=Math.max(1,innerHeight);if(canvas.width!==w*d||canvas.height!==h*d){canvas.width=w*d;canvas.height=h*d}gl.viewport(0,0,canvas.width,canvas.height)}
+function cubeDraw(x,y,z,sx=1,sy=1,sz=1,tint=[1,1,1]){
+ gl.uniform3f(uOffset,x,y,z);gl.uniform3f(uScale,sx,sy,sz);gl.uniform3f(uTint,tint[0],tint[1],tint[2]);gl.drawArrays(gl.TRIANGLES,0,36);
+}
+function drawPlayer(){
+ const x=P.x,z=P.z,feet=P.y-.7;
+ drawScaledCube(x-.25,feet,z-.15,.20,.72,.30);
+ drawScaledCube(x+.05,feet,z-.15,.20,.72,.30);
+ drawScaledCube(x-.25,feet+.72,z-.15,.50,.68,.30);
+ drawScaledCube(x-.30,feet+.74,z-.12,.10,.62,.24);
+ drawScaledCube(x+.20,feet+.74,z-.12,.10,.62,.24);
+ drawScaledCube(x-.20,feet+1.40,z-.20,.40,.40,.40);
+}
+function render(){
+ resize();gl.enable(gl.DEPTH_TEST);gl.disable(gl.CULL_FACE);gl.clearColor(.45,.72,.91,1);gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);
+ const cp=Math.cos(P.pitch),dir=[Math.sin(P.yaw)*cp,Math.sin(P.pitch),Math.cos(P.yaw)*cp],eyeY=P.y-(crouching?.35:0);
+ let cam=[P.x,eyeY,P.z],target=[P.x+dir[0],eyeY+dir[1],P.z+dir[2]];
+ if(cameraMode!==0){
+   const s=cameraMode===1?-1:1;
+   cam=[P.x+dir[0]*thirdDist*s,eyeY+dir[1]*thirdDist*s+.25,P.z+dir[2]*thirdDist*s];
+   target=[P.x,eyeY-.18,P.z];
+ }
+ const view=lookAt(cam,target,[0,1,0]),proj=perspective(fov,canvas.width/canvas.height,.05,50),vp=mul(proj,view);
+ gl.uniformMatrix4fv(uVP,false,vp);
+ for(const s of blocks){const q=s.split(',');cubeDraw(+q[0],+q[1],+q[2]);}
+ if(cameraMode!==0)drawPlayer();
+}
+function raycast(){const cp=Math.cos(P.pitch),dx=Math.sin(P.yaw)*cp,dy=Math.sin(P.pitch),dz=Math.cos(P.yaw)*cp,eyeY=P.y-(crouching?.35:0);let prev=null,last='';
+ for(let d=.05;d<=6;d+=.035){const x=Math.floor(P.x+dx*d),y=Math.floor(eyeY+dy*d),z=Math.floor(P.z+dz*d),k=K(x,y,z);if(k===last)continue;last=k;if(blocks.has(k))return{hit:{x,y,z},place:prev};prev={x,y,z}}return null}
+function floorY(){const x=Math.floor(P.x),z=Math.floor(P.z);for(let y=5;y>=-4;y--)if(blocks.has(K(x,y,z)))return y+1.7;return -100}
+function solid(x,y,z){return blocks.has(K(Math.floor(x),Math.floor(y),Math.floor(z)))}
+function bind(id,fn){document.getElementById(id).addEventListener('touchstart',e=>{e.preventDefault();e.stopPropagation();fn()},{passive:false})}
+bind('break',()=>{const r=raycast();if(r)blocks.delete(K(r.hit.x,r.hit.y,r.hit.z))});
+bind('place',()=>{const r=raycast();if(r&&r.place)blocks.add(K(r.place.x,r.place.y,r.place.z))});
+bind('jump',()=>{if(P.ground){P.vy=sprinting?.158:.145;if(sprinting)sprintBoost=.09;P.ground=false}});
+bind('crouch',()=>{crouching=!crouching;if(crouching)sprinting=false;document.getElementById('crouch').classList.toggle('active',crouching);document.getElementById('sprint').classList.toggle('active',sprinting)});
+bind('sprint',()=>{sprinting=!sprinting;if(sprinting)crouching=false;document.getElementById('sprint').classList.toggle('active',sprinting);document.getElementById('crouch').classList.toggle('active',crouching)});
+bind('cameraBtn',()=>setCameraMode(cameraMode===0?1:0));
+
+let sid=null,lid=null,sx=0,sy=0,lx=0,ly=0;const knob=document.getElementById('knob');
+const activeTouches=new Map();let pinchIds=[],pinchStartDist=0,pinchStartFov=fov,pinchStartThird=thirdDist;
+function td(a,b){return Math.hypot(a.x-b.x,a.y-b.y)}
+function tryPinch(){
+ const a=[...activeTouches.entries()].filter(([id])=>id!==sid);
+ if(a.length>=2){pinchIds=[a[0][0],a[1][0]];pinchStartDist=td(a[0][1],a[1][1]);pinchStartFov=fov;pinchStartThird=thirdDist;if(pinchIds.includes(lid))lid=null;}
+}
+addEventListener('touchstart',e=>{
+ for(const x of e.changedTouches){
+   const el=document.elementFromPoint(x.clientX,x.clientY);if(el&&el.tagName==='BUTTON')continue;
+   activeTouches.set(x.identifier,{x:x.clientX,y:x.clientY});
+   if(x.clientX<180&&x.clientY>innerHeight-215&&sid===null){sid=x.identifier;sx=x.clientX;sy=x.clientY}
+   else if(lid===null&&pinchIds.length===0){lid=x.identifier;lx=x.clientX;ly=x.clientY}
+ }
+ if(activeTouches.size-(sid!==null?1:0)>=2)tryPinch();
+},{passive:false});
+addEventListener('touchmove',e=>{
+ e.preventDefault();for(const x of e.changedTouches)activeTouches.set(x.identifier,{x:x.clientX,y:x.clientY});
+ if(pinchIds.length===2&&activeTouches.has(pinchIds[0])&&activeTouches.has(pinchIds[1])){
+   const d=td(activeTouches.get(pinchIds[0]),activeTouches.get(pinchIds[1])),ratio=d/(pinchStartDist||d);
+   if(cameraMode===0){
+     const nf=pinchStartFov/ratio;fov=Math.max(Math.PI/5,Math.min(Math.PI/1.65,nf));
+     if(nf>Math.PI/1.72){setCameraMode(1);thirdDist=2.2;fov=Math.PI/2.25;pinchStartDist=d;pinchStartThird=thirdDist;}
+   }else{
+     thirdDist=Math.max(.62,Math.min(7,pinchStartThird/ratio));
+     if(thirdDist<.72){setCameraMode(0);thirdDist=3.2;fov=Math.PI/2.25;pinchIds=[];}
+   }
+ }
+ for(const x of e.changedTouches){
+   if(x.identifier===sid){let dx=x.clientX-sx,dy=x.clientY-sy,L=Math.hypot(dx,dy),sc=Math.min(1,45/(L||1));dx*=sc;dy*=sc;move.x=dx/45;move.y=dy/45;knob.style.transform=`translate(${dx}px,${dy}px)`}
+   else if(x.identifier===lid&&pinchIds.length===0){const dx=x.clientX-lx,dy=x.clientY-ly;P.yaw-=dx*.006;P.pitch=Math.max(-1.25,Math.min(1.25,P.pitch-dy*.006));lx=x.clientX;ly=x.clientY}
+ }
+},{passive:false});
+function touchEnd(e){for(const x of e.changedTouches){activeTouches.delete(x.identifier);if(x.identifier===sid){sid=null;move.x=move.y=0;knob.style.transform=''}if(x.identifier===lid)lid=null;if(pinchIds.includes(x.identifier))pinchIds=[]}}
+addEventListener('touchend',touchEnd);addEventListener('touchcancel',touchEnd);
+
+let last=performance.now(),frames=0,lastDbg=0;
+function tick(now){const dt=Math.min(2,(now-last)/16.667);last=now;
+ const speed=(crouching?.026:(sprinting?.085:.052))*dt,fx=Math.sin(P.yaw),fz=Math.cos(P.yaw),rx=-Math.cos(P.yaw),rz=Math.sin(P.yaw);
+ let nx=P.x+(fx*-move.y+rx*move.x)*speed,nz=P.z+(fz*-move.y+rz*move.x)*speed;
+ if(sprintBoost>0&&!P.ground){nx+=fx*sprintBoost*dt;nz+=fz*sprintBoost*dt;sprintBoost=Math.max(0,sprintBoost-.009*dt)}
+ function hasFloor(x,z){const fy=Math.floor(P.y-.71),r=.20;return solid(x,fy,z)||solid(x-r,fy,z)||solid(x+r,fy,z)||solid(x,fy,z-r)||solid(x,fy,z+r)}
+ if((!crouching||!P.ground||hasFloor(nx,P.z))&&!solid(nx,P.y-.45,P.z))P.x=nx;
+ if((!crouching||!P.ground||hasFloor(P.x,nz))&&!solid(P.x,P.y-.45,nz))P.z=nz;
+ P.vy-=.0082*dt;P.y+=P.vy*dt;const fy=floorY();if(P.vy<=0&&P.y<=fy&&fy>-50){P.y=fy;P.vy=0;P.ground=true}else P.ground=false;
+ if(P.y<-8)Object.assign(P,{x:.5,y:1.7,z:3.3,yaw:Math.PI,pitch:-.36,vy:0,ground:true});
+ render();frames++;if(now-lastDbg>1000){dbg.textContent=`WebGL OK · ${blocks.size} blocks · ${frames} fps · ${cameraMode===0?'1P':cameraMode===1?'3P rear':'3P front'}${cameraMode?' · '+thirdDist.toFixed(1)+'m':''}`;frames=0;lastDbg=now}
+ requestAnimationFrame(tick)}
+requestAnimationFrame(tick);
+})();
+</script></body></html>
